@@ -8,6 +8,7 @@ import { Footer } from './components/Footer';
 import { ConsultationModal } from './components/ConsultationModal';
 import { FloatingContactDock } from './components/FloatingContactDock';
 import { AdminDashboard, type SiteConfig } from './components/AdminDashboard';
+import { API_BASE_URL } from './lib/api';
 
 const defaultSettings: SiteConfig = {
   heroTitleLine1: 'From Ideas to',
@@ -39,7 +40,7 @@ export function App() {
   useEffect(() => {
     const fetchSettings = async () => {
       try {
-        const res = await fetch('http://localhost:5000/api/settings');
+        const res = await fetch(`${API_BASE_URL}/settings`);
         const json = await res.json();
         if (json.success && json.data) {
           setSettings((prev) => ({ ...prev, ...json.data }));

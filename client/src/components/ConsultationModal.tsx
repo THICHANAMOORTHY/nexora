@@ -9,6 +9,7 @@ import {
   Sparkles,
   ShieldCheck
 } from 'lucide-react';
+import { API_BASE_URL } from '../lib/api';
 
 interface ConsultationModalProps {
   isOpen: boolean;
@@ -53,7 +54,7 @@ export const ConsultationModal: React.FC<ConsultationModalProps> = ({
     setLoading(true);
 
     try {
-      await fetch('http://localhost:5000/api/inquiries', {
+      await fetch(`${API_BASE_URL}/inquiries`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...formData, role }),

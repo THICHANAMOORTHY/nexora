@@ -54,8 +54,8 @@ mongoose
     console.warn('⚠️ MongoDB connection warning (Operating in fallback hybrid mode):', err.message);
   });
 
-// Health check
-app.get('/api/health', (req, res) => {
+// Health check (Supports Render root health probes and /api/health)
+const healthHandler = (req, res) => {
   res.json({
     status: 'healthy',
     company: 'Nexora Technologies',
@@ -64,7 +64,11 @@ app.get('/api/health', (req, res) => {
     mongoStatus: isMongoConnected ? 'connected' : 'hybrid_in_memory',
     timestamp: new Date().toISOString(),
   });
-});
+};
+
+app.get('/', healthHandler);
+app.get('/health', healthHandler);
+app.get('/api/health', healthHandler);
 
 // Projects API
 app.get('/api/projects', async (req, res) => {

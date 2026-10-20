@@ -11,6 +11,7 @@ import {
   SlidersHorizontal,
   X
 } from 'lucide-react';
+import { API_BASE_URL } from '../lib/api';
 
 interface ProjectCatalogProps {
   searchQuery: string;
@@ -41,7 +42,7 @@ export const ProjectCatalog: React.FC<ProjectCatalogProps> = ({
     const fetchProjects = async () => {
       try {
         setLoading(true);
-        const res = await fetch('http://localhost:5000/api/projects');
+        const res = await fetch(`${API_BASE_URL}/projects`);
         const json = await res.json();
         if (json.success && Array.isArray(json.data)) {
           setProjects(json.data);

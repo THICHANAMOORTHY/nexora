@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: nexora-backend
+    env: node
+    plan: free
+    region: singapore
+    rootDir: server
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SUPABASE_URL
+        value: https://wlwlpkizjxtbgjiwmpdk.supabase.co
+      - key: SUPABASE_KEY
+        sync: false
+      - key: ADMIN_EMAIL
+        value: thichu683@gmail.com
+      - key: ADMIN_PASSWORD
+        value: admin@nexora2026
