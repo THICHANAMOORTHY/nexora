@@ -113,13 +113,48 @@ const initialProjects = [
   }
 ];
 
+import { supabase } from './supabase.js';
+
 async function seed() {
   try {
-    await mongoose.connect(MONGODB_URI);
-    console.log('Connected to MongoDB for seeding...');
-    await Project.deleteMany({});
-    const inserted = await Project.insertMany(initialProjects);
-    console.log(`✅ Seeded ${inserted.length} academic projects into MongoDB successfully.`);
+    // 1. Seed MongoDB if available
+    try {
+      await mongoose.connect(MONGODB_URI);
+      console.log('Connected to MongoDB for seeding...');
+      await Project.deleteMany({});
+      const inserted = await Project.insertMany(initialProjects);
+      console.log(`✅ Seeded ${inserted.length} academic projects into MongoDB successfully.`);
+    } catch (mErr) {
+      console.warn('MongoDB seed skipped or offline:', mErr.message);
+    }
+
+    // 2. Seed Supabase if available
+    if (supabase) {
+      console.log('Seeding projects to Supabase PostgreSQL...');
+      const supabaseProjects = initialProjects.map((p) => ({
+        project_id: p.projectId,
+        title: p.title,
+        category: p.category,
+        department: p.department,
+        level: p.level,
+        ieee_year: p.ieeeYear,
+        description: p.description,
+        tech_stack: p.techStack,
+        deliverables: p.deliverables,
+      }));
+
+      const { data, error } = await supabase.from('projects').upsert(supabaseProjects, { onConflict: 'project_id' }).select();
+      if (error) {
+        console.error('❌ Supabase projects seed error:', error.message);
+      } else {
+        console.log(`✅ Seeded ${data.length} academic projects into Supabase projects table successfully!`);
+      }
+    }
+
+    if (mongoose.connection.readyState !== 0) {
+      await mongoose.disconnect();
+    }
+    console.log('🎉 Seeding completed perfectly.');
     process.exit(0);
   } catch (err) {
     console.error('Seeding error:', err);

@@ -80,7 +80,15 @@ app.get('/api/projects', async (req, res) => {
 
       const { data, error } = await sbQuery;
       if (!error && data && data.length > 0) {
-        return res.json({ success: true, count: data.length, data });
+        const normalized = data.map((p) => ({
+          ...p,
+          _id: p.id,
+          projectId: p.project_id || p.projectId || p.id,
+          techStack: Array.isArray(p.tech_stack) ? p.tech_stack : (p.techStack || []),
+          deliverables: Array.isArray(p.deliverables) ? p.deliverables : [],
+          ieeeYear: p.ieee_year || p.ieeeYear || 'IEEE 2025/2026',
+        }));
+        return res.json({ success: true, count: normalized.length, data: normalized });
       }
     }
 
@@ -189,7 +197,12 @@ app.get('/api/inquiries', async (req, res) => {
       try {
         const { data, error } = await supabase.from('inquiries').select('*').order('created_at', { ascending: false });
         if (!error && data) {
-          return res.json({ success: true, source: 'supabase', count: data.length, data });
+          const normalized = data.map((item) => ({
+            ...item,
+            _id: item.id,
+            createdAt: item.created_at || new Date().toISOString(),
+          }));
+          return res.json({ success: true, source: 'supabase', count: normalized.length, data: normalized });
         }
       } catch (sbErr) {
         console.warn('Supabase fetch inquiries error:', sbErr.message);
