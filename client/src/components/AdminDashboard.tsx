@@ -678,7 +678,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           category: projectForm.category,
           department: projectForm.department,
           level: projectForm.level,
-          ieee_year: projectForm.ieeeYear || 'IEEE 2025/2026',
+          ieee_year: (projectForm.ieeeYear || 'IEEE 2025/2026').slice(0, 50),
           description: projectForm.description || '',
           tech_stack: techStackArr,
           deliverables: deliverablesArr,
