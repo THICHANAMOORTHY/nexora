@@ -20,6 +20,7 @@ import {
   User
 } from 'lucide-react';
 import { API_BASE_URL } from '../lib/api';
+import { supabase } from '../lib/supabaseClient';
 
 export type ServiceType = 
   | 'Project Reports' 
@@ -303,6 +304,38 @@ export const ServiceDataCollectionModal: React.FC<ServiceDataCollectionModalProp
       } else {
         setErrorMessage(json.message || 'Submission failed. Please try again.');
       }
+      // Cloud Sync: Mirror submission as an Inquiry in Supabase so it's always received in Admin Dashboard
+      if (supabase) {
+        try {
+          const topicSummary = (requirements as any)?.projectTitle || 
+                               (requirements as any)?.researchTitle || 
+                               (requirements as any)?.targetRole || 
+                               (requirements as any)?.portfolioPersona || 
+                               `[${activeService}] Structured Request`;
+          const requirementsSummary = Object.entries(requirements || {})
+            .filter(([_, v]) => v)
+            .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`)
+            .join(' | ');
+
+          const sbPayload = {
+            role: 'student',
+            name: student.name,
+            phone: student.phone,
+            email: student.email,
+            college: student.college || 'Engineering College',
+            branch: student.department || 'CSE/IT',
+            level: student.academicYear || student.degree || 'Final Year Capstone',
+            domain: activeService,
+            topic: `[${activeService}] ${topicSummary}`,
+            deadline: 'Standard',
+            notes: requirementsSummary,
+            status: 'New',
+          };
+          await supabase.from('inquiries').insert([sbPayload]);
+        } catch (sbErr) {
+          console.warn('Supabase lead mirror note:', sbErr);
+        }
+      }
     } catch (err: any) {
       // Fallback: Generate local request ID if backend is in transition
       const mockId = `NXR-${activeService.slice(0, 2).toUpperCase()}-2026-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
@@ -315,6 +348,34 @@ export const ServiceDataCollectionModal: React.FC<ServiceDataCollectionModalProp
         timestamp: new Date().toLocaleString(),
       });
       setCurrentStep(5);
+
+      // Direct fallback to Supabase if API threw network error
+      if (supabase) {
+        try {
+          const topicSummary = (requirements as any)?.projectTitle || 
+                               (requirements as any)?.researchTitle || 
+                               (requirements as any)?.targetRole || 
+                               (requirements as any)?.portfolioPersona || 
+                               `[${activeService}] Structured Request`;
+          const sbPayload = {
+            role: 'student',
+            name: student.name,
+            phone: student.phone,
+            email: student.email,
+            college: student.college || 'Engineering College',
+            branch: student.department || 'CSE/IT',
+            level: student.academicYear || student.degree || 'Final Year Capstone',
+            domain: activeService,
+            topic: `[${activeService}] ${topicSummary} (${mockId})`,
+            deadline: 'Standard',
+            notes: Object.entries(requirements || {}).map(([k, v]) => `${k}: ${v}`).join(' | '),
+            status: 'New',
+          };
+          await supabase.from('inquiries').insert([sbPayload]);
+        } catch (e) {
+          console.warn('Direct Supabase fallback note:', e);
+        }
+      }
     } finally {
       setSubmitting(false);
     }

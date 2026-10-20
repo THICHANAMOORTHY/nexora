@@ -207,10 +207,10 @@ app.post('/api/inquiries', async (req, res) => {
       status: 'New',
     };
 
+    let supabaseSaved = null;
     // 1. If Supabase is connected, store in Supabase
     if (supabase) {
       try {
-        // Base payload safe for standard supabase schema
         const sbPayload = {
           role: inquiryPayload.role,
           name: inquiryPayload.name,
@@ -227,69 +227,104 @@ app.post('/api/inquiries', async (req, res) => {
         };
         const { data, error } = await supabase.from('inquiries').insert([sbPayload]).select();
         if (!error && data && data.length > 0) {
-          return res.status(201).json({
-            success: true,
-            source: 'supabase',
-            message: 'Project inquiry registered successfully in Supabase! Our team will contact you within 30 minutes.',
-            data: data[0],
-          });
+          supabaseSaved = data[0];
+        } else if (error) {
+          console.warn('Supabase inquiry insert warning:', error.message);
         }
       } catch (sbErr) {
         console.warn('Supabase insert warning:', sbErr.message);
       }
     }
 
-    // 2. If Mongo connected
+    // 2. Also persist in MongoDB so both local and cloud databases stay in sync
+    let mongoSaved = null;
     if (isMongoConnected) {
-      const savedInquiry = await Inquiry.create(inquiryPayload);
-      return res.status(201).json({
-        success: true,
-        source: 'mongodb',
-        message: 'Project inquiry registered successfully. Our team will contact you within 30 minutes.',
-        data: savedInquiry,
-      });
+      try {
+        mongoSaved = await Inquiry.create(inquiryPayload);
+      } catch (mErr) {
+        console.warn('MongoDB inquiry insert warning:', mErr.message);
+      }
     }
 
-    // 3. Fallback in-memory registration
-    inquiryPayload._id = 'temp_' + Date.now();
-    inquiryPayload.createdAt = new Date().toISOString();
-    inMemoryInquiries.push(inquiryPayload);
+    // 3. Fallback in-memory registration if neither DB is available
+    if (!supabaseSaved && !mongoSaved) {
+      inquiryPayload._id = 'temp_' + Date.now();
+      inquiryPayload.createdAt = new Date().toISOString();
+      inMemoryInquiries.push(inquiryPayload);
+    }
 
     return res.status(201).json({
       success: true,
-      source: 'memory',
-      message: 'Project inquiry registered successfully (Active in-memory). Our team will contact you within 30 minutes.',
-      data: inquiryPayload,
+      source: supabaseSaved ? 'supabase' : (mongoSaved ? 'mongodb' : 'memory'),
+      message: 'Project inquiry registered successfully! Our team will contact you within 30 minutes.',
+      data: supabaseSaved || mongoSaved || inquiryPayload,
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Admin: Retrieve inquiries
+// Admin: Retrieve inquiries (merges Supabase, MongoDB, and in-memory inquiries)
 app.get('/api/inquiries', async (req, res) => {
   try {
+    const allInquiries = [];
+    const seenMap = new Map();
+
+    // 1. Fetch from Supabase
     if (supabase) {
       try {
         const { data, error } = await supabase.from('inquiries').select('*').order('created_at', { ascending: false });
         if (!error && data) {
-          const normalized = data.map((item) => ({
-            ...item,
-            _id: item.id,
-            createdAt: item.created_at || new Date().toISOString(),
-          }));
-          return res.json({ success: true, source: 'supabase', count: normalized.length, data: normalized });
+          data.forEach((item) => {
+            const key = `${(item.email || '').toLowerCase().trim()}_${(item.phone || '').trim()}_${(item.topic || '').trim()}`;
+            const normalized = {
+              ...item,
+              _id: item.id,
+              createdAt: item.created_at || new Date().toISOString(),
+            };
+            seenMap.set(key, true);
+            allInquiries.push(normalized);
+          });
         }
       } catch (sbErr) {
         console.warn('Supabase fetch inquiries error:', sbErr.message);
       }
     }
 
+    // 2. Fetch from MongoDB and include any inquiries not already added
     if (isMongoConnected) {
-      const list = await Inquiry.find().sort({ createdAt: -1 });
-      return res.json({ success: true, count: list.length, data: list });
+      try {
+        const list = await Inquiry.find().sort({ createdAt: -1 });
+        list.forEach((doc) => {
+          const item = doc.toObject ? doc.toObject() : doc;
+          const key = `${(item.email || '').toLowerCase().trim()}_${(item.phone || '').trim()}_${(item.topic || '').trim()}`;
+          if (!seenMap.has(key)) {
+            seenMap.set(key, true);
+            allInquiries.push({
+              ...item,
+              _id: item._id ? item._id.toString() : item.id,
+              createdAt: item.createdAt || new Date().toISOString(),
+            });
+          }
+        });
+      } catch (mErr) {
+        console.warn('MongoDB fetch inquiries error:', mErr.message);
+      }
     }
-    return res.json({ success: true, count: inMemoryInquiries.length, data: inMemoryInquiries });
+
+    // 3. Include any active in-memory inquiries
+    inMemoryInquiries.forEach((item) => {
+      const key = `${(item.email || '').toLowerCase().trim()}_${(item.phone || '').trim()}_${(item.topic || '').trim()}`;
+      if (!seenMap.has(key)) {
+        seenMap.set(key, true);
+        allInquiries.push(item);
+      }
+    });
+
+    // Sort newest inquiries first
+    allInquiries.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+
+    return res.json({ success: true, count: allInquiries.length, data: allInquiries });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -299,12 +334,13 @@ app.get('/api/inquiries', async (req, res) => {
 app.patch('/api/inquiries/:id', async (req, res) => {
   try {
     const { status } = req.body;
-    
+    let updatedItem = null;
+
     if (supabase) {
       try {
         const { data, error } = await supabase.from('inquiries').update({ status }).eq('id', req.params.id).select();
         if (!error && data && data.length > 0) {
-          return res.json({ success: true, source: 'supabase', data: data[0] });
+          updatedItem = data[0];
         }
       } catch (e) {
         console.warn('Supabase update status warning:', e.message);
@@ -312,12 +348,58 @@ app.patch('/api/inquiries/:id', async (req, res) => {
     }
 
     if (isMongoConnected) {
-      const updated = await Inquiry.findByIdAndUpdate(req.params.id, { status }, { new: true });
-      return res.json({ success: true, data: updated });
+      try {
+        const query = req.params.id.match(/^[0-9a-fA-F]{24}$/) 
+          ? { _id: req.params.id } 
+          : { email: req.body.email || '' };
+        const updated = await Inquiry.findOneAndUpdate(query, { status }, { new: true });
+        if (updated && !updatedItem) {
+          updatedItem = updated;
+        }
+      } catch (mErr) {
+        console.warn('MongoDB update status warning:', mErr.message);
+      }
     }
+
     const item = inMemoryInquiries.find((i) => i._id === req.params.id || i.id === req.params.id);
-    if (item) item.status = status;
-    return res.json({ success: true, data: item });
+    if (item) {
+      item.status = status;
+      if (!updatedItem) updatedItem = item;
+    }
+
+    return res.json({ success: true, data: updatedItem || { _id: req.params.id, status } });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Admin: Delete inquiry
+app.delete('/api/inquiries/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    if (supabase) {
+      try {
+        await supabase.from('inquiries').delete().eq('id', id);
+      } catch (e) {
+        console.warn('Supabase delete inquiry error:', e.message);
+      }
+    }
+
+    if (isMongoConnected && id.match(/^[0-9a-fA-F]{24}$/)) {
+      try {
+        await Inquiry.findByIdAndDelete(id);
+      } catch (mErr) {
+        console.warn('MongoDB delete inquiry error:', mErr.message);
+      }
+    }
+
+    const memIdx = inMemoryInquiries.findIndex((i) => i._id === id || i.id === id);
+    if (memIdx !== -1) {
+      inMemoryInquiries.splice(memIdx, 1);
+    }
+
+    return res.json({ success: true, message: 'Inquiry deleted successfully' });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -762,6 +844,36 @@ app.post('/api/service-requests', upload.array('attachments', 6), async (req, re
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
+
+    // Also mirror as an inquiry in Supabase so it is backed up in the cloud and visible in Inquiries dashboard
+    if (supabase) {
+      try {
+        const topicSummary = (requirements && typeof requirements === 'object')
+          ? (requirements.projectTitle || requirements.researchTitle || requirements.targetRole || requirements.portfolioPersona || `[${serviceType}] Request`)
+          : `[${serviceType}] Request`;
+        const notesSummary = (requirements && typeof requirements === 'object')
+          ? Object.entries(requirements).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`).join(' | ')
+          : '';
+
+        const sbPayload = {
+          role: 'student',
+          name: student.name,
+          phone: student.phone,
+          email: student.email,
+          college: student.college || 'Engineering College',
+          branch: student.department || 'CSE/IT',
+          level: student.academicYear || student.degree || 'Final Year Capstone',
+          domain: serviceType,
+          topic: `[${serviceType}] ${topicSummary} (Req ID: ${requestId})`,
+          deadline: 'Standard',
+          notes: notesSummary ? `[Request ID: ${requestId}]\n${notesSummary}` : `[Request ID: ${requestId}]`,
+          status: 'New',
+        };
+        await supabase.from('inquiries').insert([sbPayload]);
+      } catch (sbLeadErr) {
+        console.warn('Supabase service request lead sync warning:', sbLeadErr.message);
+      }
+    }
 
     // Store in MongoDB if connected
     if (isMongoConnected) {

@@ -16,6 +16,7 @@ import {
   Check
 } from 'lucide-react';
 import { API_BASE_URL } from '../lib/api';
+import { supabase } from '../lib/supabaseClient';
 
 export type ServiceType = 
   | 'Academic Projects' 
@@ -233,18 +234,47 @@ export const ConsultationModal: React.FC<ConsultationModalProps> = ({
       topic: (specificDetails as any).topic || (specificDetails as any).projectTitle || (specificDetails as any).paperTitle || (specificDetails as any).targetRole || serviceType,
     };
 
+    // 1. Direct Supabase cloud insertion ensures lead is immediately saved and never lost
+    if (supabase) {
+      try {
+        const sbPayload = {
+          role: payload.role || 'student',
+          name: payload.name,
+          phone: payload.phone,
+          email: payload.email,
+          college: payload.college,
+          branch: payload.branch,
+          level: payload.level,
+          domain: payload.domain,
+          topic: payload.topic,
+          deadline: payload.deadline || '',
+          notes: payload.notes || (payload.serviceType ? `[${payload.serviceType}] Inquiry` : ''),
+          status: 'New',
+        };
+        const { error: sbErr } = await supabase.from('inquiries').insert([sbPayload]);
+        if (!sbErr) {
+          window.dispatchEvent(new CustomEvent('nexora_inquiries_updated'));
+        } else {
+          console.warn('Supabase inquiry insert error:', sbErr);
+        }
+      } catch (sbErr) {
+        console.warn('Supabase insert exception:', sbErr);
+      }
+    }
+
+    // 2. Also forward to Express backend API if active
     try {
       await fetch(`${API_BASE_URL}/inquiries`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      setLoading(false);
-      setSubmitted(true);
     } catch {
-      setLoading(false);
-      setSubmitted(true);
+      // Backend server may be sleeping or offline
     }
+
+    setLoading(false);
+    setSubmitted(true);
   };
 
   const handleWhatsAppDirect = () => {

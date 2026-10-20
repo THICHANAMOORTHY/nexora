@@ -12,6 +12,7 @@ import {
   X
 } from 'lucide-react';
 import { API_BASE_URL } from '../lib/api';
+import { supabase } from '../lib/supabaseClient';
 
 interface ProjectCatalogProps {
   searchQuery: string;
@@ -37,26 +38,70 @@ export const ProjectCatalog: React.FC<ProjectCatalogProps> = ({
     setInternalSearch(searchQuery);
   }, [searchQuery]);
 
-  // Fetch real projects from MongoDB backend
+  // Fetch real projects from Backend API or directly from Supabase Cloud
   useEffect(() => {
     const fetchProjects = async () => {
+      let loaded = false;
       try {
         setLoading(true);
         const res = await fetch(`${API_BASE_URL}/projects`);
-        const json = await res.json();
-        if (json.success && Array.isArray(json.data)) {
-          setProjects(json.data);
-        } else {
-          setProjects([]);
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success && Array.isArray(json.data) && json.data.length > 0) {
+            setProjects(json.data);
+            loaded = true;
+          }
         }
       } catch {
-        setProjects([]);
-      } finally {
-        setLoading(false);
+        // Backend API offline or unreachable
       }
+
+      // Supabase Cloud direct fallback ensures projects show on Vercel even if backend is offline
+      if (!loaded && supabase) {
+        try {
+          const { data, error } = await supabase
+            .from('projects')
+            .select('*')
+            .order('created_at', { ascending: false });
+
+          if (!error && data && data.length > 0) {
+            const normalized: Project[] = data.map((p: any) => ({
+              id: p.id,
+              projectId: p.project_id || p.id,
+              title: p.title,
+              category: p.category,
+              department: p.department,
+              level: p.level || 'Final Year Capstone',
+              ieeeYear: p.ieee_year || 'IEEE 2025/2026',
+              description: p.description || '',
+              techStack: Array.isArray(p.tech_stack) ? p.tech_stack : [],
+              deliverables: Array.isArray(p.deliverables) ? p.deliverables : [],
+            }));
+            setProjects(normalized);
+            loaded = true;
+          }
+        } catch (sbErr) {
+          console.warn('Supabase projects fetch warning:', sbErr);
+        }
+      }
+
+      if (!loaded) {
+        setProjects([]);
+      }
+      setLoading(false);
     };
 
     fetchProjects();
+
+    // Listen for project publishing events from AdminDashboard
+    const handleProjectsUpdated = () => {
+      fetchProjects();
+    };
+    window.addEventListener('nexora_projects_updated', handleProjectsUpdated);
+
+    return () => {
+      window.removeEventListener('nexora_projects_updated', handleProjectsUpdated);
+    };
   }, []);
 
   const categories = ['ALL', 'AI/ML', 'Full-Stack', 'IoT/Embedded', 'Cybersecurity', 'Cloud/DevOps', 'Blockchain'];

@@ -10,6 +10,7 @@ import { ServiceDataCollectionModal, type ServiceType } from './components/Servi
 import { FloatingContactDock } from './components/FloatingContactDock';
 import { AdminDashboard, type SiteConfig } from './components/AdminDashboard';
 import { API_BASE_URL } from './lib/api';
+import { supabase } from './lib/supabaseClient';
 
 const defaultSettings: SiteConfig = {
   heroTitleLine1: 'From Ideas to',
@@ -40,17 +41,43 @@ export function App() {
   const [isAdminOpen, setIsAdminOpen] = useState(false);
   const [settings, setSettings] = useState<SiteConfig>(defaultSettings);
 
-  // Fetch site configuration from MongoDB backend
+  // Fetch site configuration from Backend API or Supabase Cloud
   useEffect(() => {
     const fetchSettings = async () => {
+      let loaded = false;
       try {
         const res = await fetch(`${API_BASE_URL}/settings`);
-        const json = await res.json();
-        if (json.success && json.data) {
-          setSettings((prev) => ({ ...prev, ...json.data }));
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success && json.data) {
+            setSettings((prev) => ({ ...prev, ...json.data }));
+            loaded = true;
+          }
         }
       } catch {
-        // Fallback to local default settings
+        // Backend API offline
+      }
+
+      if (!loaded && supabase) {
+        try {
+          const { data, error } = await supabase.from('site_settings').select('*').eq('id', 1).single();
+          if (!error && data) {
+            setSettings((prev) => ({
+              ...prev,
+              heroTitleLine1: data.hero_title_line1 || prev.heroTitleLine1,
+              heroTitleHighlight: data.hero_title_highlight || prev.heroTitleHighlight,
+              heroSubtitle: data.hero_subtitle || prev.heroSubtitle,
+              heroEyebrow: data.hero_eyebrow || prev.heroEyebrow,
+              phone: data.phone || prev.phone,
+              email: data.email || prev.email,
+              address: data.address || prev.address,
+              whatsappNumber: data.whatsapp_number || prev.whatsappNumber,
+              servicesList: data.services_list || prev.servicesList,
+            }));
+          }
+        } catch (sbErr) {
+          console.warn('Supabase settings fetch warning:', sbErr);
+        }
       }
     };
 

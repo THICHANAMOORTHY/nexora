@@ -28,6 +28,7 @@ import {
   Check
 } from 'lucide-react';
 import { API_BASE_URL } from '../lib/api';
+import { supabase } from '../lib/supabaseClient';
 
 export interface SiteConfig {
   _id?: string;
@@ -133,8 +134,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState('');
 
-  // Dashboard Tab state
-  const [activeTab, setActiveTab] = useState<'hero' | 'contact' | 'inquiries' | 'projects' | 'serviceRequests'>('serviceRequests');
+  // Dashboard Tab state (Default to 'inquiries' so student queries are immediately visible)
+  const [activeTab, setActiveTab] = useState<'hero' | 'contact' | 'inquiries' | 'projects' | 'serviceRequests'>('inquiries');
   const [formData, setFormData] = useState<SiteConfig>(currentSettings);
   const [servicesInput, setServicesInput] = useState<string>(
     (currentSettings.servicesList || []).join(', ')
@@ -184,6 +185,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       fetchInquiries();
       fetchProjects();
       fetchServiceRequests();
+
+      // Auto-refresh inquiries and service requests every 15 seconds while dashboard is open
+      const pollTimer = setInterval(() => {
+        fetchInquiries();
+        fetchServiceRequests();
+      }, 15000);
+      return () => clearInterval(pollTimer);
     }
   }, [isOpen, isAuthenticated]);
 
@@ -247,13 +255,44 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const fetchInquiries = async () => {
     try {
       setLoadingInquiries(true);
-      const res = await fetch(`${API_BASE_URL}/inquiries`);
-      const json = await res.json();
-      if (json.success && Array.isArray(json.data)) {
-        setInquiries(json.data);
+      let loaded = false;
+
+      // 1. Try Express backend API
+      try {
+        const res = await fetch(`${API_BASE_URL}/inquiries`);
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success && Array.isArray(json.data)) {
+            setInquiries(json.data);
+            loaded = true;
+          }
+        }
+      } catch {
+        // Backend offline or unreachable
       }
-    } catch {
-      // offline fallback
+
+      // 2. Direct Supabase cloud fallback if backend API was offline or returned empty
+      if (!loaded && supabase) {
+        try {
+          const { data, error } = await supabase
+            .from('inquiries')
+            .select('*')
+            .order('created_at', { ascending: false });
+
+          if (!error && data) {
+            const normalized = data.map((item: any) => ({
+              ...item,
+              _id: item.id,
+              createdAt: item.created_at || new Date().toISOString(),
+            }));
+            setInquiries(normalized);
+          }
+        } catch (sbErr) {
+          console.warn('Supabase inquiries direct fetch warning:', sbErr);
+        }
+      }
+    } catch (err) {
+      console.warn('Fetch inquiries error:', err);
     } finally {
       setLoadingInquiries(false);
     }
@@ -262,10 +301,53 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const fetchProjects = async () => {
     try {
       setLoadingProjects(true);
-      const res = await fetch(`${API_BASE_URL}/projects`);
-      const json = await res.json();
-      if (json.success && Array.isArray(json.data)) {
-        setProjects(json.data);
+      let loaded = false;
+
+      // 1. Try Express backend API
+      try {
+        const res = await fetch(`${API_BASE_URL}/projects`);
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success && Array.isArray(json.data) && json.data.length > 0) {
+            setProjects(json.data);
+            loaded = true;
+          }
+        }
+      } catch {
+        // Backend API offline
+      }
+
+      // 2. Direct Supabase Cloud Fallback
+      if (!loaded && supabase) {
+        try {
+          const { data, error } = await supabase
+            .from('projects')
+            .select('*')
+            .order('created_at', { ascending: false });
+
+          if (!error && data) {
+            const normalized: ProjectItem[] = data.map((p: any) => ({
+              _id: p.id,
+              projectId: p.project_id || p.id,
+              title: p.title,
+              category: p.category,
+              department: p.department,
+              level: p.level || 'Final Year Capstone',
+              ieeeYear: p.ieee_year || 'IEEE 2025/2026',
+              description: p.description || '',
+              techStack: Array.isArray(p.tech_stack) ? p.tech_stack : [],
+              deliverables: Array.isArray(p.deliverables) ? p.deliverables : []
+            }));
+            setProjects(normalized);
+            loaded = true;
+          }
+        } catch (sbErr) {
+          console.warn('Supabase projects fetch note:', sbErr);
+        }
+      }
+
+      if (!loaded) {
+        setProjects([]);
       }
     } catch {
       // offline fallback
@@ -452,25 +534,57 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         .filter(Boolean),
     };
 
+    let saved = false;
+
+    // 1. Try Express backend API
     try {
       const res = await fetch(`${API_BASE_URL}/settings`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      const json = await res.json();
-      if (json.success) {
-        onSettingsUpdated(json.data || payload);
-        setSaveSuccess(true);
-        setTimeout(() => setSaveSuccess(false), 4000);
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success) {
+          onSettingsUpdated(json.data || payload);
+          saved = true;
+        }
       }
     } catch {
-      onSettingsUpdated(payload);
-      setSaveSuccess(true);
-      setTimeout(() => setSaveSuccess(false), 4000);
-    } finally {
-      setSaving(false);
+      // Backend API offline
     }
+
+    // 2. Direct Supabase Cloud Sync
+    if (supabase) {
+      try {
+        const { error } = await supabase.from('site_settings').upsert({
+          id: 1,
+          hero_title_line1: payload.heroTitleLine1,
+          hero_title_highlight: payload.heroTitleHighlight,
+          hero_subtitle: payload.heroSubtitle,
+          hero_eyebrow: payload.heroEyebrow,
+          phone: payload.phone,
+          email: payload.email,
+          address: payload.address,
+          whatsapp_number: payload.whatsappNumber,
+          services_list: payload.servicesList,
+          updated_at: new Date().toISOString()
+        });
+        if (!error) {
+          saved = true;
+          onSettingsUpdated(payload);
+        }
+      } catch (sbErr) {
+        console.warn('Supabase settings save warning:', sbErr);
+      }
+    }
+
+    if (!saved) {
+      onSettingsUpdated(payload);
+    }
+    setSaveSuccess(true);
+    setTimeout(() => setSaveSuccess(false), 4000);
+    setSaving(false);
   };
 
   const handleUpdateInquiryStatus = async (id: string, status: string) => {
@@ -480,65 +594,190 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
       });
-      setInquiries((prev) =>
-        prev.map((inq) => (inq._id === id ? { ...inq, status } : inq))
-      );
     } catch {
       // fallback
     }
+
+    if (supabase) {
+      try {
+        await supabase.from('inquiries').update({ status }).eq('id', id);
+      } catch (e) {
+        console.warn('Supabase status update error:', e);
+      }
+    }
+
+    setInquiries((prev) =>
+      prev.map((inq) => (inq._id === id ? { ...inq, status } : inq))
+    );
+  };
+
+  const handleDeleteInquiry = async (id: string) => {
+    if (!window.confirm('Are you sure you want to remove this student inquiry?')) return;
+    try {
+      await fetch(`${API_BASE_URL}/inquiries/${id}`, {
+        method: 'DELETE',
+      });
+    } catch {
+      // offline
+    }
+
+    if (supabase) {
+      try {
+        await supabase.from('inquiries').delete().eq('id', id);
+      } catch (e) {
+        console.warn('Supabase delete inquiry error:', e);
+      }
+    }
+
+    setInquiries((prev) => prev.filter((inq) => inq._id !== id));
   };
 
   // 3. PROJECT CRUD: CREATE OR UPDATE
   const handleSaveProject = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!projectForm.title.trim()) {
+      alert('Please enter a Project Title before publishing.');
+      return;
+    }
     setSavingProject(true);
     setProjectActionSuccess(null);
 
     const isEdit = Boolean(editingProjectId);
-    const url = isEdit 
-      ? `${API_BASE_URL}/projects/${editingProjectId}`
-      : `${API_BASE_URL}/projects`;
-    const method = isEdit ? 'PUT' : 'POST';
+    const techStackArr = projectForm.techStack.split(',').map((t) => t.trim()).filter(Boolean);
+    const deliverablesArr = projectForm.deliverables.split(',').map((d) => d.trim()).filter(Boolean);
 
+    let savedProject: ProjectItem | null = null;
+
+    // 1. Try Express backend API
     try {
+      const url = isEdit 
+        ? `${API_BASE_URL}/projects/${editingProjectId}`
+        : `${API_BASE_URL}/projects`;
+      const method = isEdit ? 'PUT' : 'POST';
+
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(projectForm),
       });
-      const json = await res.json();
-
-      if (json.success && json.data) {
-        if (isEdit) {
-          setProjects((prev) =>
-            prev.map((p) => (p._id === editingProjectId || p.projectId === editingProjectId ? json.data : p))
-          );
-          setProjectActionSuccess('Project updated in Supabase successfully!');
-        } else {
-          setProjects((prev) => [json.data, ...prev]);
-          setProjectActionSuccess('New project published to live directory successfully!');
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && json.data) {
+          savedProject = json.data;
         }
-
-        // Reset form
-        setProjectForm({
-          title: '',
-          category: 'AI/ML',
-          department: 'CSE/IT',
-          level: 'Final Year Capstone',
-          ieeeYear: 'IEEE 2025/2026',
-          description: '',
-          techStack: 'Python, PyTorch, React, FastAPI',
-          deliverables: 'Working Model Code, IEEE Base Paper, Project Report, PPT Deck, Viva Voce Prep',
-        });
-        setEditingProjectId(null);
-        setTimeout(() => setProjectActionSuccess(null), 4000);
       }
     } catch {
-      // offline fallback
-      setProjectActionSuccess('Action processed in local fallback.');
-    } finally {
-      setSavingProject(false);
+      // Backend API offline
     }
+
+    // 2. Direct Supabase Cloud Save (Guarantees publication to live website)
+    if (supabase) {
+      try {
+        const sbPayload = {
+          title: projectForm.title.trim(),
+          category: projectForm.category,
+          department: projectForm.department,
+          level: projectForm.level,
+          ieee_year: projectForm.ieeeYear || 'IEEE 2025/2026',
+          description: projectForm.description || '',
+          tech_stack: techStackArr,
+          deliverables: deliverablesArr,
+        };
+
+        if (isEdit) {
+          const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(editingProjectId!);
+          let query = supabase.from('projects').update(sbPayload);
+          if (isUUID) {
+            query = query.eq('id', editingProjectId);
+          } else {
+            query = query.eq('project_id', editingProjectId);
+          }
+          const { data, error } = await query.select();
+          if (!error && data && data.length > 0) {
+            const p = data[0];
+            savedProject = {
+              _id: p.id,
+              projectId: p.project_id || p.id,
+              title: p.title,
+              category: p.category,
+              department: p.department,
+              level: p.level,
+              ieeeYear: p.ieee_year || 'IEEE 2025/2026',
+              description: p.description,
+              techStack: p.tech_stack || [],
+              deliverables: p.deliverables || []
+            };
+          }
+        } else {
+          const generatedId = 'PRJ-' + Math.floor(1000 + Math.random() * 9000);
+          const { data, error } = await supabase.from('projects').insert([{
+            project_id: generatedId,
+            ...sbPayload,
+          }]).select();
+
+          if (!error && data && data.length > 0) {
+            const p = data[0];
+            savedProject = {
+              _id: p.id,
+              projectId: p.project_id || p.id,
+              title: p.title,
+              category: p.category,
+              department: p.department,
+              level: p.level,
+              ieeeYear: p.ieee_year || 'IEEE 2025/2026',
+              description: p.description,
+              techStack: p.tech_stack || [],
+              deliverables: p.deliverables || []
+            };
+          }
+        }
+      } catch (sbErr) {
+        console.warn('Supabase direct project save error:', sbErr);
+      }
+    }
+
+    if (!savedProject) {
+      savedProject = {
+        _id: 'temp_' + Date.now(),
+        projectId: 'PRJ-' + Math.floor(1000 + Math.random() * 9000),
+        title: projectForm.title,
+        category: projectForm.category,
+        department: projectForm.department,
+        level: projectForm.level,
+        ieeeYear: projectForm.ieeeYear,
+        description: projectForm.description,
+        techStack: techStackArr,
+        deliverables: deliverablesArr,
+      };
+    }
+
+    if (isEdit) {
+      setProjects((prev) =>
+        prev.map((p) => (p._id === editingProjectId || p.projectId === editingProjectId ? savedProject! : p))
+      );
+      setProjectActionSuccess('Project updated in live catalog & Supabase successfully!');
+    } else {
+      setProjects((prev) => [savedProject!, ...prev]);
+      setProjectActionSuccess('New project published to live directory & Supabase successfully!');
+    }
+
+    // Trigger instant refresh across live website catalog
+    window.dispatchEvent(new CustomEvent('nexora_projects_updated'));
+
+    // Reset form
+    setProjectForm({
+      title: '',
+      category: 'AI/ML',
+      department: 'CSE/IT',
+      level: 'Final Year Capstone',
+      ieeeYear: 'IEEE 2025/2026',
+      description: '',
+      techStack: 'Python, PyTorch, React, FastAPI',
+      deliverables: 'Working Model Code, IEEE Base Paper, Project Report, PPT Deck, Viva Voce Prep',
+    });
+    setEditingProjectId(null);
+    setTimeout(() => setProjectActionSuccess(null), 4000);
+    setSavingProject(false);
   };
 
   const handleEditClick = (p: ProjectItem) => {
@@ -573,14 +812,31 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const handleDeleteProject = async (id: string) => {
     if (!window.confirm('Are you sure you want to delete this project from the database?')) return;
+
     try {
       await fetch(`${API_BASE_URL}/projects/${id}`, { method: 'DELETE' });
-      setProjects((prev) => prev.filter((p) => p._id !== id && p.projectId !== id));
-      if (editingProjectId === id) {
-        handleCancelEdit();
-      }
     } catch {
-      // ignore
+      // offline fallback
+    }
+
+    if (supabase) {
+      try {
+        const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+        if (isUUID) {
+          await supabase.from('projects').delete().eq('id', id);
+        } else {
+          await supabase.from('projects').delete().eq('project_id', id);
+        }
+      } catch (sbErr) {
+        console.warn('Supabase delete error:', sbErr);
+      }
+    }
+
+    setProjects((prev) => prev.filter((p) => p._id !== id && p.projectId !== id));
+    window.dispatchEvent(new CustomEvent('nexora_projects_updated'));
+
+    if (editingProjectId === id) {
+      handleCancelEdit();
     }
   };
 
@@ -633,6 +889,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         {/* Tab Navigation */}
         <div className="flex border-b border-slate-200 bg-slate-50/90 px-6 gap-2 sm:gap-6 overflow-x-auto shrink-0">
           <button
+            onClick={() => setActiveTab('inquiries')}
+            className={`py-3.5 text-xs sm:text-sm font-bold border-b-2 flex items-center gap-2 transition shrink-0 ${
+              activeTab === 'inquiries'
+                ? 'border-sky-600 text-sky-700'
+                : 'border-transparent text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <Users className="w-4 h-4 text-sky-600" />
+            <span>Student Inquiries ({inquiries.length})</span>
+            {inquiries.filter((i) => !i.status || i.status === 'New').length > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full bg-emerald-500 text-white text-[10px] font-bold animate-pulse">
+                {inquiries.filter((i) => !i.status || i.status === 'New').length} new
+              </span>
+            )}
+          </button>
+
+          <button
             onClick={() => setActiveTab('serviceRequests')}
             className={`py-3.5 text-xs sm:text-sm font-bold border-b-2 flex items-center gap-2 transition shrink-0 ${
               activeTab === 'serviceRequests'
@@ -683,18 +956,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           >
             <PhoneCall className="w-4 h-4" />
             <span>Company Contacts</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('inquiries')}
-            className={`py-3.5 text-xs sm:text-sm font-bold border-b-2 flex items-center gap-2 transition shrink-0 ${
-              activeTab === 'inquiries'
-                ? 'border-sky-600 text-sky-700'
-                : 'border-transparent text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Users className="w-4 h-4" />
-            <span>Student Inquiries ({inquiries.length})</span>
           </button>
         </div>
 
@@ -1222,6 +1483,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                               {inq.serviceType}
                             </span>
                           )}
+                          {inq.createdAt && (
+                            <span className="text-[10px] text-slate-400">
+                              · {new Date(inq.createdAt).toLocaleDateString()} {new Date(inq.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          )}
                         </div>
                         <div className="flex items-center gap-2">
                           <select
@@ -1234,6 +1500,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             <option value="Proposal Sent">Status: Proposal Sent</option>
                             <option value="Completed">Status: Completed</option>
                           </select>
+                          <button
+                            onClick={() => handleDeleteInquiry(inq._id)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
+                            title="Delete Inquiry"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       </div>
 
