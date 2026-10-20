@@ -4,7 +4,14 @@ import {
   ChevronDown, 
   Menu, 
   X, 
-  GraduationCap
+  GraduationCap,
+  Laptop,
+  Cpu,
+  Sparkles,
+  FolderGit2,
+  Shield,
+  Home,
+  MessageSquare
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -25,25 +32,25 @@ export const Navbar: React.FC<NavbarProps> = ({
   return (
     <header className="sticky top-0 z-50 w-full bg-white/95 backdrop-blur-md border-b border-slate-100 shadow-xs">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="h-20 flex items-center justify-between gap-2">
+        <div className="h-16 sm:h-20 flex items-center justify-between gap-2">
           
           {/* Logo with Leaf & Graduation Tech Branding */}
           <a href="#" className="flex items-center gap-2 sm:gap-3 shrink min-w-0">
-            <div className="relative flex items-center justify-center w-9 h-9 sm:w-11 sm:h-11 rounded-xl bg-gradient-to-tr from-sky-500 via-teal-500 to-emerald-500 p-0.5 shadow-md shrink-0">
+            <div className="relative flex items-center justify-center w-8 h-8 sm:w-11 sm:h-11 rounded-xl bg-gradient-to-tr from-sky-500 via-teal-500 to-emerald-500 p-0.5 shadow-md shrink-0">
               <div className="w-full h-full bg-white rounded-[10px] flex items-center justify-center">
                 <GraduationCap className="w-4 h-4 sm:w-6 sm:h-6 text-sky-600" />
               </div>
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-1 sm:gap-1.5 flex-wrap">
-                <span className="font-extrabold text-lg sm:text-2xl tracking-tight text-[#172554]">
+                <span className="font-extrabold text-base sm:text-2xl tracking-tight text-[#172554]">
                   NEXORA
                 </span>
-                <span className="font-bold text-[9px] sm:text-xs px-1.5 sm:px-2 py-0.5 rounded-full bg-sky-50 text-sky-600 border border-sky-200 shrink-0">
+                <span className="font-bold text-[8px] sm:text-xs px-1.5 sm:px-2 py-0.5 rounded-full bg-sky-50 text-sky-600 border border-sky-200 shrink-0">
                   PROJECT LAB
                 </span>
               </div>
-              <p className="text-[8px] sm:text-[10px] text-slate-500 font-semibold tracking-wider uppercase truncate">
+              <p className="text-[7.5px] sm:text-[10px] text-slate-500 font-semibold tracking-wider uppercase truncate">
                 Final Year Academic Project Center
               </p>
             </div>
@@ -120,51 +127,56 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Mobile Menu Toggle */}
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="lg:hidden p-2 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition"
+            className="lg:hidden p-1.5 sm:p-2 rounded-lg text-slate-700 hover:text-slate-900 hover:bg-slate-100 transition border border-slate-200"
             aria-label="Toggle navigation menu"
           >
-            {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+            {mobileMenuOpen ? <X className="w-5 h-5 sm:w-6 sm:h-6" /> : <Menu className="w-5 h-5 sm:w-6 sm:h-6" />}
           </button>
         </div>
       </div>
 
       {/* Mobile Drawer */}
       {mobileMenuOpen && (
-        <div className="lg:hidden border-t border-slate-100 bg-white px-5 py-5 space-y-3 shadow-lg">
+        <div className="lg:hidden border-t border-slate-100 bg-white/98 backdrop-blur-xl px-4 py-4 space-y-2 shadow-2xl animate-in slide-in-from-top-2 duration-200">
           <a 
             href="#" 
             onClick={() => setMobileMenuOpen(false)} 
-            className="block py-2 text-sm font-semibold text-sky-600 border-b border-slate-50"
+            className="flex items-center gap-2.5 py-2 px-3 text-xs font-bold text-sky-600 bg-sky-50 rounded-xl"
           >
-            Home
+            <Home className="w-4 h-4 text-sky-600" />
+            <span>Home</span>
           </a>
           <a 
             href="#departments" 
             onClick={() => setMobileMenuOpen(false)} 
-            className="block py-2 text-sm font-semibold text-slate-800 hover:text-sky-600 border-b border-slate-50"
+            className="flex items-center gap-2.5 py-2 px-3 text-xs font-semibold text-slate-800 hover:bg-slate-50 hover:text-sky-600 rounded-xl transition"
           >
-            B.E / B.Tech CSE & IT Projects
+            <Laptop className="w-4 h-4 text-sky-500" />
+            <span>B.E / B.Tech CSE & IT Projects</span>
           </a>
           <a 
             href="#departments" 
             onClick={() => setMobileMenuOpen(false)} 
-            className="block py-2 text-sm font-semibold text-slate-800 hover:text-sky-600 border-b border-slate-50"
+            className="flex items-center gap-2.5 py-2 px-3 text-xs font-semibold text-slate-800 hover:bg-slate-50 hover:text-sky-600 rounded-xl transition"
           >
-            B.E ECE (IoT & Embedded Projects)
+            <Cpu className="w-4 h-4 text-emerald-500" />
+            <span>B.E ECE (IoT & Embedded Projects)</span>
           </a>
           <a 
             href="#academic-support" 
             onClick={() => setMobileMenuOpen(false)} 
-            className="block py-2 text-sm font-semibold text-slate-800 hover:text-sky-600 border-b border-slate-50"
+            className="flex items-center gap-2.5 py-2 px-3 text-xs font-semibold text-slate-800 hover:bg-slate-50 hover:text-purple-600 rounded-xl transition"
           >
-            Academic Support (Reports, IEEE, Resumes)
+            <Sparkles className="w-4 h-4 text-purple-500" />
+            <span>Academic Support (Reports, IEEE, Resumes)</span>
           </a>
           <a 
             href="#projects" 
             onClick={() => setMobileMenuOpen(false)} 
-            className="block py-2 text-sm font-semibold text-slate-800 hover:text-sky-600 border-b border-slate-50"
+            className="flex items-center gap-2.5 py-2 px-3 text-xs font-semibold text-slate-800 hover:bg-slate-50 hover:text-sky-600 rounded-xl transition"
           >
-            Explore Projects Directory
+            <FolderGit2 className="w-4 h-4 text-indigo-500" />
+            <span>Explore Projects Directory</span>
           </a>
           <a 
             href="#contact" 
@@ -172,17 +184,18 @@ export const Navbar: React.FC<NavbarProps> = ({
               setMobileMenuOpen(false);
               onOpenConsultation();
             }} 
-            className="block py-2 text-sm font-semibold text-slate-800 hover:text-sky-600"
+            className="flex items-center gap-2.5 py-2 px-3 text-xs font-semibold text-slate-800 hover:bg-slate-50 hover:text-sky-600 rounded-xl transition"
           >
-            Contact & Consultation
+            <MessageSquare className="w-4 h-4 text-sky-500" />
+            <span>Contact & Free Consultation</span>
           </a>
           
-          <div className="pt-2 space-y-2">
+          <div className="pt-2 space-y-2 border-t border-slate-100">
             <a
               href={`tel:+91${cleanPhone}`}
-              className="flex items-center justify-center gap-2 w-full py-3 rounded-lg bg-[#15803d] text-white font-bold text-sm shadow-md"
+              className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl bg-[#15803d] text-white font-bold text-xs shadow-md"
             >
-              <Phone className="w-4 h-4 fill-white" />
+              <Phone className="w-3.5 h-3.5 fill-white" />
               <span>Call Helpline: +91 {cleanPhone}</span>
             </a>
 
@@ -192,9 +205,10 @@ export const Navbar: React.FC<NavbarProps> = ({
                   setMobileMenuOpen(false);
                   onOpenAdmin();
                 }}
-                className="w-full py-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs flex items-center justify-center gap-1.5 transition"
+                className="w-full py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs flex items-center justify-center gap-1.5 transition"
               >
-                <span>Open Admin Management Portal</span>
+                <Shield className="w-3.5 h-3.5 text-slate-600" />
+                <span>Open Admin Portal</span>
               </button>
             )}
           </div>

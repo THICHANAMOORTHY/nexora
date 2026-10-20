@@ -2,9 +2,13 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
+import fs from 'node:fs';
+import path from 'node:path';
+import multer from 'multer';
 import { Inquiry } from './models/Inquiry.js';
 import { Project } from './models/Project.js';
 import { SiteSettings } from './models/SiteSettings.js';
+import { ServiceRequest } from './models/ServiceRequest.js';
 import { supabase, SUPABASE_URL } from './supabase.js';
 
 dotenv.config();
@@ -26,6 +30,45 @@ if (supabase) {
 // In-memory fallback if MongoDB instance isn't active locally yet
 let isMongoConnected = false;
 const inMemoryInquiries = [];
+const inMemoryServiceRequests = [];
+
+// Secure file uploads directory
+const UPLOADS_DIR = path.join(process.cwd(), 'uploads');
+if (!fs.existsSync(UPLOADS_DIR)) {
+  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+}
+
+// Multer Storage Configuration
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, UPLOADS_DIR);
+  },
+  filename: (req, file, cb) => {
+    const sanitized = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e6);
+    cb(null, `${uniqueSuffix}-${sanitized}`);
+  },
+});
+
+// File filter: Whitelist allowed file extensions for security
+const fileFilter = (req, file, cb) => {
+  const allowedExts = /\.(pdf|doc|docx|png|jpg|jpeg|zip|ppt|pptx|txt)$/i;
+  if (file.originalname.match(allowedExts)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Invalid file type. Only PDF, DOC, DOCX, PNG, JPG, ZIP, PPT, and TXT files are allowed.'), false);
+  }
+};
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 15 * 1024 * 1024 }, // 15MB limit
+  fileFilter,
+});
+
+// Static uploads serving
+app.use('/uploads', express.static(UPLOADS_DIR));
+
 let inMemorySettings = {
   heroTitleLine1: 'From Ideas to',
   heroTitleHighlight: 'Innovation.',
@@ -126,13 +169,25 @@ app.get('/api/projects', async (req, res) => {
 // Submit Lead Inquiry (Student or College)
 app.post('/api/inquiries', async (req, res) => {
   try {
-    const { name, phone, email, college, branch, level, domain, topic, deadline, notes, role } = req.body;
+    const { name, phone, email, college, branch, level, domain, topic, deadline, notes, role, serviceType, serviceDetails } = req.body;
 
     if (!name || !phone || !email || !college) {
       return res.status(400).json({
         success: false,
         message: 'Name, phone, email, and college are mandatory fields.',
       });
+    }
+
+    // Format specific details if provided
+    let enrichedNotes = notes || '';
+    if (serviceDetails && typeof serviceDetails === 'object' && Object.keys(serviceDetails).length > 0) {
+      const detailsList = Object.entries(serviceDetails)
+        .filter(([_, v]) => v)
+        .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`)
+        .join(' | ');
+      if (detailsList) {
+        enrichedNotes = enrichedNotes ? `${enrichedNotes}\n[Details: ${detailsList}]` : `[Details: ${detailsList}]`;
+      }
     }
 
     const inquiryPayload = {
@@ -143,17 +198,34 @@ app.post('/api/inquiries', async (req, res) => {
       college,
       branch: branch || 'CSE/IT',
       level: level || 'Final Year Capstone',
-      domain: domain || 'AI/ML & Data Science',
-      topic: topic || '',
+      domain: domain || (serviceType ? serviceType : 'AI/ML & Data Science'),
+      topic: topic || (serviceType ? `[${serviceType}] Inquiry` : ''),
       deadline: deadline || '',
-      notes: notes || '',
+      notes: enrichedNotes,
+      serviceType: serviceType || 'Academic Projects',
+      serviceDetails: serviceDetails || {},
       status: 'New',
     };
 
     // 1. If Supabase is connected, store in Supabase
     if (supabase) {
       try {
-        const { data, error } = await supabase.from('inquiries').insert([inquiryPayload]).select();
+        // Base payload safe for standard supabase schema
+        const sbPayload = {
+          role: inquiryPayload.role,
+          name: inquiryPayload.name,
+          phone: inquiryPayload.phone,
+          email: inquiryPayload.email,
+          college: inquiryPayload.college,
+          branch: inquiryPayload.branch,
+          level: inquiryPayload.level,
+          domain: inquiryPayload.domain,
+          topic: inquiryPayload.topic,
+          deadline: inquiryPayload.deadline,
+          notes: inquiryPayload.notes,
+          status: inquiryPayload.status,
+        };
+        const { data, error } = await supabase.from('inquiries').insert([sbPayload]).select();
         if (!error && data && data.length > 0) {
           return res.status(201).json({
             success: true,
@@ -594,6 +666,298 @@ app.get('/api/admin/verify', (req, res) => {
   }
   return res.status(401).json({ success: false, valid: false });
 });
+
+// ==========================================
+// STUDENT SERVICE REQUESTS SYSTEM (4 Segments)
+// 1. Project Reports
+// 2. IEEE Reports
+// 3. Resume Building
+// 4. Portfolio Development
+// ==========================================
+
+const generateRequestId = (serviceType) => {
+  const prefixMap = {
+    'Project Reports': 'NXR-PR',
+    'IEEE Reports': 'NXR-IEEE',
+    'Resume Building': 'NXR-RES',
+    'Portfolio Development': 'NXR-PORT',
+  };
+  const prefix = prefixMap[serviceType] || 'NXR-SR';
+  const year = new Date().getFullYear();
+  const randomSuffix = Math.random().toString(36).substring(2, 6).toUpperCase();
+  return `${prefix}-${year}-${randomSuffix}`;
+};
+
+// 1. Submit Service Request (Supports multi-part attachments)
+app.post('/api/service-requests', upload.array('attachments', 6), async (req, res) => {
+  try {
+    let { serviceType, student, requirements, consentGiven } = req.body;
+
+    // Parse JSON if sent as stringified multipart form-data
+    if (typeof student === 'string') {
+      try { student = JSON.parse(student); } catch { student = {}; }
+    }
+    if (typeof requirements === 'string') {
+      try { requirements = JSON.parse(requirements); } catch { requirements = {}; }
+    }
+
+    // Fallback if student fields were sent as top-level fields
+    if (!student || !student.name) {
+      student = {
+        name: req.body.name || student?.name || '',
+        email: req.body.email || student?.email || '',
+        phone: req.body.phone || student?.phone || '',
+        college: req.body.college || student?.college || '',
+        department: req.body.department || student?.department || '',
+        degree: req.body.degree || student?.degree || '',
+        academicYear: req.body.academicYear || student?.academicYear || '',
+        location: req.body.location || student?.location || '',
+      };
+    }
+
+    if (!student.name || !student.email || !student.phone) {
+      return res.status(400).json({
+        success: false,
+        message: 'Student name, email address, and phone number are required.',
+      });
+    }
+
+    // Email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(student.email)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide a valid email address.',
+      });
+    }
+
+    const validServices = ['Project Reports', 'IEEE Reports', 'Resume Building', 'Portfolio Development'];
+    if (!serviceType || !validServices.includes(serviceType)) {
+      serviceType = 'Project Reports';
+    }
+
+    // Process uploaded file attachments
+    const attachments = (req.files || []).map((file) => ({
+      filename: file.filename,
+      originalName: file.originalname,
+      mimetype: file.mimetype,
+      size: file.size,
+      path: `/uploads/${file.filename}`,
+      uploadedAt: new Date(),
+    }));
+
+    const requestId = generateRequestId(serviceType);
+
+    const serviceRequestPayload = {
+      requestId,
+      serviceType,
+      student,
+      requirements: requirements || {},
+      attachments,
+      status: 'Pending',
+      priority: 'Normal',
+      adminNotes: [],
+      consentGiven: consentGiven !== undefined ? Boolean(consentGiven) : true,
+      ipAddress: req.ip || req.headers['x-forwarded-for'] || '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    // Store in MongoDB if connected
+    if (isMongoConnected) {
+      try {
+        const saved = await ServiceRequest.create(serviceRequestPayload);
+        return res.status(201).json({
+          success: true,
+          message: 'Service request submitted successfully to database.',
+          requestId,
+          data: saved,
+        });
+      } catch (dbErr) {
+        console.warn('MongoDB save warning:', dbErr.message);
+      }
+    }
+
+    // Fallback: Store in memory
+    serviceRequestPayload._id = 'sr_' + Date.now();
+    inMemoryServiceRequests.unshift(serviceRequestPayload);
+
+    return res.status(201).json({
+      success: true,
+      message: 'Service request registered successfully (Active session).',
+      requestId,
+      data: serviceRequestPayload,
+    });
+  } catch (error) {
+    console.error('Service request error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 2. Admin: Get all service requests with filtering and search
+app.get('/api/service-requests', async (req, res) => {
+  try {
+    const { serviceType, status, search } = req.query;
+
+    if (isMongoConnected) {
+      const query = {};
+      if (serviceType && serviceType !== 'ALL') {
+        query.serviceType = serviceType;
+      }
+      if (status && status !== 'ALL') {
+        query.status = status;
+      }
+      if (search) {
+        query.$or = [
+          { requestId: { $regex: search, $options: 'i' } },
+          { 'student.name': { $regex: search, $options: 'i' } },
+          { 'student.email': { $regex: search, $options: 'i' } },
+          { 'student.phone': { $regex: search, $options: 'i' } },
+          { 'student.college': { $regex: search, $options: 'i' } },
+        ];
+      }
+
+      const list = await ServiceRequest.find(query).sort({ createdAt: -1 });
+      return res.json({ success: true, count: list.length, data: list });
+    }
+
+    // Memory fallback
+    let results = [...inMemoryServiceRequests];
+    if (serviceType && serviceType !== 'ALL') {
+      results = results.filter((r) => r.serviceType === serviceType);
+    }
+    if (status && status !== 'ALL') {
+      results = results.filter((r) => r.status === status);
+    }
+    if (search) {
+      const s = search.toLowerCase();
+      results = results.filter(
+        (r) =>
+          r.requestId?.toLowerCase().includes(s) ||
+          r.student?.name?.toLowerCase().includes(s) ||
+          r.student?.email?.toLowerCase().includes(s) ||
+          r.student?.phone?.includes(s) ||
+          r.student?.college?.toLowerCase().includes(s)
+      );
+    }
+
+    return res.json({ success: true, count: results.length, data: results });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 3. Admin: Get single service request details
+app.get('/api/service-requests/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (isMongoConnected) {
+      const item = await ServiceRequest.findOne({
+        $or: [{ _id: mongoose.isValidObjectId(id) ? id : null }, { requestId: id }],
+      });
+      if (item) return res.json({ success: true, data: item });
+    }
+
+    const memoryItem = inMemoryServiceRequests.find(
+      (r) => r._id === id || r.requestId === id
+    );
+    if (memoryItem) return res.json({ success: true, data: memoryItem });
+
+    return res.status(404).json({ success: false, message: 'Service request not found.' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 4. Admin: Update request status
+app.patch('/api/service-requests/:id/status', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    const validStatuses = ['Pending', 'Reviewing', 'In Progress', 'Completed', 'Rejected'];
+
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ success: false, message: 'Invalid status provided.' });
+    }
+
+    if (isMongoConnected) {
+      const updated = await ServiceRequest.findOneAndUpdate(
+        { $or: [{ _id: mongoose.isValidObjectId(id) ? id : null }, { requestId: id }] },
+        { status, updatedAt: new Date() },
+        { new: true }
+      );
+      if (updated) return res.json({ success: true, data: updated });
+    }
+
+    const item = inMemoryServiceRequests.find((r) => r._id === id || r.requestId === id);
+    if (item) {
+      item.status = status;
+      item.updatedAt = new Date().toISOString();
+      return res.json({ success: true, data: item });
+    }
+
+    return res.status(404).json({ success: false, message: 'Request not found.' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 5. Admin: Add internal note
+app.post('/api/service-requests/:id/notes', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { note, author } = req.body;
+
+    if (!note || !note.trim()) {
+      return res.status(400).json({ success: false, message: 'Note text cannot be empty.' });
+    }
+
+    const newNote = {
+      note: note.trim(),
+      author: author || 'Admin',
+      createdAt: new Date(),
+    };
+
+    if (isMongoConnected) {
+      const updated = await ServiceRequest.findOneAndUpdate(
+        { $or: [{ _id: mongoose.isValidObjectId(id) ? id : null }, { requestId: id }] },
+        { $push: { adminNotes: newNote }, updatedAt: new Date() },
+        { new: true }
+      );
+      if (updated) return res.json({ success: true, data: updated });
+    }
+
+    const item = inMemoryServiceRequests.find((r) => r._id === id || r.requestId === id);
+    if (item) {
+      item.adminNotes = item.adminNotes || [];
+      item.adminNotes.push(newNote);
+      return res.json({ success: true, data: item });
+    }
+
+    return res.status(404).json({ success: false, message: 'Request not found.' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 6. Admin: Securely download attachment
+app.get('/api/service-requests/attachment/:filename', (req, res) => {
+  try {
+    const { filename } = req.params;
+    const safeFilename = path.basename(filename);
+    const filePath = path.join(UPLOADS_DIR, safeFilename);
+
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ success: false, message: 'File not found or expired.' });
+    }
+
+    res.download(filePath, safeFilename);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 
 app.listen(PORT, () => {
   console.log(`🚀 Nexora Technologies API Server listening on port ${PORT}`);

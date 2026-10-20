@@ -51,6 +51,14 @@ const inquirySchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+    serviceType: {
+      type: String,
+      default: 'Academic Projects',
+    },
+    serviceDetails: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
     status: {
       type: String,
       enum: ['New', 'Contacted', 'Synopsis Sent', 'Enrolled', 'Delivered', 'Cancelled'],

@@ -18,7 +18,14 @@ import {
   EyeOff,
   Pencil,
   AlertCircle,
-  PlusCircle
+  PlusCircle,
+  FileText,
+  Search,
+  Download,
+  Paperclip,
+  MessageSquare,
+  FileCode,
+  Check
 } from 'lucide-react';
 import { API_BASE_URL } from '../lib/api';
 
@@ -44,6 +51,9 @@ interface InquiryItem {
   branch: string;
   level: string;
   topic?: string;
+  notes?: string;
+  serviceType?: string;
+  serviceDetails?: any;
   status?: string;
   createdAt?: string;
 }
@@ -59,6 +69,40 @@ interface ProjectItem {
   description: string;
   techStack: string[];
   deliverables?: string[];
+}
+
+export interface ServiceRequestItem {
+  _id: string;
+  requestId: string;
+  serviceType: string;
+  student: {
+    name: string;
+    email: string;
+    phone: string;
+    college?: string;
+    department?: string;
+    degree?: string;
+    academicYear?: string;
+    location?: string;
+  };
+  requirements: Record<string, any>;
+  attachments?: Array<{
+    filename: string;
+    originalName: string;
+    mimetype?: string;
+    size?: number;
+    path: string;
+    uploadedAt?: string;
+  }>;
+  status: 'Pending' | 'Reviewing' | 'In Progress' | 'Completed' | 'Rejected';
+  priority?: string;
+  adminNotes?: Array<{
+    note: string;
+    author: string;
+    createdAt: string;
+  }>;
+  createdAt: string;
+  updatedAt?: string;
 }
 
 interface AdminDashboardProps {
@@ -90,13 +134,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [loginError, setLoginError] = useState('');
 
   // Dashboard Tab state
-  const [activeTab, setActiveTab] = useState<'hero' | 'contact' | 'inquiries' | 'projects'>('projects');
+  const [activeTab, setActiveTab] = useState<'hero' | 'contact' | 'inquiries' | 'projects' | 'serviceRequests'>('serviceRequests');
   const [formData, setFormData] = useState<SiteConfig>(currentSettings);
   const [servicesInput, setServicesInput] = useState<string>(
     (currentSettings.servicesList || []).join(', ')
   );
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+
+  // Service Requests (4 Segments) state
+  const [serviceRequests, setServiceRequests] = useState<ServiceRequestItem[]>([]);
+  const [loadingServiceRequests, setLoadingServiceRequests] = useState(false);
+  const [serviceFilter, setServiceFilter] = useState<string>('ALL');
+  const [statusFilter, setStatusFilter] = useState<string>('ALL');
+  const [requestSearch, setRequestSearch] = useState<string>('');
+  const [selectedRequest, setSelectedRequest] = useState<ServiceRequestItem | null>(null);
+  const [newAdminNote, setNewAdminNote] = useState<string>('');
+  const [addingNote, setAddingNote] = useState<boolean>(false);
+  const [copiedReqId, setCopiedReqId] = useState<string | null>(null);
 
   // Inquiries state
   const [inquiries, setInquiries] = useState<InquiryItem[]>([]);
@@ -128,8 +183,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     if (isOpen && isAuthenticated) {
       fetchInquiries();
       fetchProjects();
+      fetchServiceRequests();
     }
   }, [isOpen, isAuthenticated]);
+
+  useEffect(() => {
+    if (isOpen && isAuthenticated && activeTab === 'serviceRequests') {
+      fetchServiceRequests();
+    }
+  }, [isOpen, isAuthenticated, activeTab, serviceFilter, statusFilter]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -211,6 +273,69 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       setLoadingProjects(false);
     }
   };
+
+  const fetchServiceRequests = async () => {
+    try {
+      setLoadingServiceRequests(true);
+      const params = new URLSearchParams();
+      if (serviceFilter !== 'ALL') params.append('serviceType', serviceFilter);
+      if (statusFilter !== 'ALL') params.append('status', statusFilter);
+      if (requestSearch.trim()) params.append('search', requestSearch.trim());
+
+      const res = await fetch(`${API_BASE_URL}/service-requests?${params.toString()}`);
+      const json = await res.json();
+      if (json.success && Array.isArray(json.data)) {
+        setServiceRequests(json.data);
+      }
+    } catch {
+      // offline fallback
+    } finally {
+      setLoadingServiceRequests(false);
+    }
+  };
+
+  const handleUpdateServiceStatus = async (id: string, status: string) => {
+    try {
+      await fetch(`${API_BASE_URL}/service-requests/${id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      });
+      setServiceRequests((prev) =>
+        prev.map((r) => (r._id === id || r.requestId === id ? { ...r, status: status as any } : r))
+      );
+      if (selectedRequest && (selectedRequest._id === id || selectedRequest.requestId === id)) {
+        setSelectedRequest((prev) => (prev ? { ...prev, status: status as any } : null));
+      }
+    } catch (err) {
+      console.error('Failed to update status', err);
+    }
+  };
+
+  const handleAddAdminNote = async (id: string) => {
+    if (!newAdminNote.trim()) return;
+    setAddingNote(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/service-requests/${id}/notes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note: newAdminNote, author: adminEmail || 'Admin' }),
+      });
+      const json = await res.json();
+      if (json.success && json.data) {
+        setServiceRequests((prev) =>
+          prev.map((r) => (r._id === id || r.requestId === id ? json.data : r))
+        );
+        setSelectedRequest(json.data);
+        setNewAdminNote('');
+      }
+    } catch (err) {
+      console.error('Failed to add note', err);
+    } finally {
+      setAddingNote(false);
+    }
+  };
+
 
   if (!isOpen) return null;
 
@@ -507,6 +632,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
         {/* Tab Navigation */}
         <div className="flex border-b border-slate-200 bg-slate-50/90 px-6 gap-2 sm:gap-6 overflow-x-auto shrink-0">
+          <button
+            onClick={() => setActiveTab('serviceRequests')}
+            className={`py-3.5 text-xs sm:text-sm font-bold border-b-2 flex items-center gap-2 transition shrink-0 ${
+              activeTab === 'serviceRequests'
+                ? 'border-purple-600 text-purple-700'
+                : 'border-transparent text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <FileText className="w-4 h-4 text-purple-600" />
+            <span>Service Requests ({serviceRequests.length})</span>
+            {serviceRequests.filter((r) => r.status === 'Pending').length > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-bold">
+                {serviceRequests.filter((r) => r.status === 'Pending').length} new
+              </span>
+            )}
+          </button>
+
           <button
             onClick={() => setActiveTab('projects')}
             className={`py-3.5 text-xs sm:text-sm font-bold border-b-2 flex items-center gap-2 transition shrink-0 ${
@@ -1072,9 +1214,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       className="p-4 rounded-2xl border border-slate-200 hover:border-sky-300 bg-white shadow-xs transition space-y-2.5"
                     >
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                        <div>
+                        <div className="flex flex-wrap items-center gap-2">
                           <span className="font-extrabold text-slate-900 text-sm">{inq.name}</span>
-                          <span className="ml-2 text-xs text-slate-500 font-medium">({inq.college})</span>
+                          <span className="text-xs text-slate-500 font-medium">({inq.college})</span>
+                          {inq.serviceType && (
+                            <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-purple-100 text-purple-800 border border-purple-200">
+                              {inq.serviceType}
+                            </span>
+                          )}
                         </div>
                         <div className="flex items-center gap-2">
                           <select
@@ -1102,7 +1249,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         </div>
                         {inq.topic && (
                           <div className="sm:col-span-3">
-                            <strong>Requested Topic:</strong> {inq.topic}
+                            <strong>Topic / Service Focus:</strong> {inq.topic}
+                          </div>
+                        )}
+                        {inq.notes && (
+                          <div className="sm:col-span-3 pt-1 text-slate-700 bg-white p-2 rounded-lg border border-slate-200/80 text-[11px] whitespace-pre-wrap">
+                            <strong>Gathered Specifications:</strong> {inq.notes}
                           </div>
                         )}
                       </div>
@@ -1133,7 +1285,428 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
           )}
 
+          {/* TAB 5: Student Service Requests (Project Reports, IEEE, Resume, Portfolio) */}
+          {activeTab === 'serviceRequests' && (
+            <div className="space-y-4">
+              
+              {/* Header & Stats */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                <div>
+                  <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-purple-600" />
+                    <span>Student Service Requests System ({serviceRequests.length})</span>
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Structured data collection submissions for Project Reports, IEEE Research, Resume Building & Portfolio Development.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={fetchServiceRequests}
+                    className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold flex items-center gap-1.5 transition"
+                  >
+                    <RotateCw className={`w-3.5 h-3.5 ${loadingServiceRequests ? 'animate-spin' : ''}`} />
+                    <span>Refresh</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Filter & Search Bar */}
+              <div className="p-3.5 rounded-2xl bg-slate-50/90 border border-slate-200 grid grid-cols-1 sm:grid-cols-4 gap-2.5">
+                <div className="sm:col-span-2 relative">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={requestSearch}
+                    onChange={(e) => setRequestSearch(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && fetchServiceRequests()}
+                    placeholder="Search by Request ID, Student Name, College, Email..."
+                    className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+
+                <div>
+                  <select
+                    value={serviceFilter}
+                    onChange={(e) => setServiceFilter(e.target.value)}
+                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-purple-500 font-medium"
+                  >
+                    <option value="ALL">All Services (4 Types)</option>
+                    <option value="Project Reports">01 / Project Reports</option>
+                    <option value="IEEE Reports">02 / IEEE Reports</option>
+                    <option value="Resume Building">03 / Resume Building</option>
+                    <option value="Portfolio Development">04 / Portfolio Development</option>
+                  </select>
+                </div>
+
+                <div>
+                  <select
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value)}
+                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-purple-500 font-medium"
+                  >
+                    <option value="ALL">All Statuses</option>
+                    <option value="Pending">Status: Pending</option>
+                    <option value="Reviewing">Status: Reviewing</option>
+                    <option value="In Progress">Status: In Progress</option>
+                    <option value="Completed">Status: Completed</option>
+                    <option value="Rejected">Status: Rejected</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Service Requests List */}
+              {loadingServiceRequests ? (
+                <div className="py-14 text-center text-xs text-slate-500 bg-slate-50 rounded-2xl border border-slate-100 flex flex-col items-center justify-center gap-2">
+                  <RotateCw className="w-5 h-5 animate-spin text-purple-600" />
+                  <span>Loading service requests...</span>
+                </div>
+              ) : serviceRequests.length === 0 ? (
+                <div className="py-14 text-center text-xs text-slate-500 bg-slate-50 rounded-2xl border border-slate-200 p-6 space-y-1">
+                  <p className="font-bold text-slate-700 text-sm">No service requests found.</p>
+                  <p className="text-slate-400 max-w-sm mx-auto">
+                    {requestSearch || serviceFilter !== 'ALL' || statusFilter !== 'ALL'
+                      ? 'No requests match your current filters. Try resetting the filters.'
+                      : 'Students have not submitted requests yet. Use the website service cards to test a submission!'}
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {serviceRequests.map((req) => {
+                    const reqTitle =
+                      req.requirements?.projectTitle ||
+                      req.requirements?.researchTitle ||
+                      req.requirements?.targetRole ||
+                      req.requirements?.professionalHeadline ||
+                      'Custom Service Inquiry';
+
+                    const serviceBadgeStyles: Record<string, string> = {
+                      'Project Reports': 'bg-purple-100 text-purple-800 border-purple-200',
+                      'IEEE Reports': 'bg-indigo-100 text-indigo-800 border-indigo-200',
+                      'Resume Building': 'bg-pink-100 text-pink-800 border-pink-200',
+                      'Portfolio Development': 'bg-violet-100 text-violet-800 border-violet-200',
+                    };
+
+                    const statusBadgeStyles: Record<string, string> = {
+                      Pending: 'bg-amber-100 text-amber-800 border-amber-200',
+                      Reviewing: 'bg-sky-100 text-sky-800 border-sky-200',
+                      'In Progress': 'bg-blue-100 text-blue-800 border-blue-200',
+                      Completed: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+                      Rejected: 'bg-rose-100 text-rose-800 border-rose-200',
+                    };
+
+                    const badgeClass = serviceBadgeStyles[req.serviceType] || 'bg-slate-100 text-slate-800 border-slate-200';
+                    const statusClass = statusBadgeStyles[req.status] || 'bg-slate-100 text-slate-800 border-slate-200';
+
+                    return (
+                      <div
+                        key={req._id || req.requestId}
+                        className="p-4 sm:p-5 rounded-2xl border border-slate-200 hover:border-purple-300 bg-white shadow-xs transition space-y-3"
+                      >
+                        {/* Top Row: Request ID, Service Badge, Status, Date */}
+                        <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-100">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-mono text-xs font-black text-purple-700 bg-purple-50 px-2.5 py-1 rounded-lg border border-purple-200 flex items-center gap-1.5">
+                              <span>{req.requestId}</span>
+                              <button
+                                onClick={() => {
+                                  navigator.clipboard.writeText(req.requestId);
+                                  setCopiedReqId(req.requestId);
+                                  setTimeout(() => setCopiedReqId(null), 2000);
+                                }}
+                                title="Copy Request ID"
+                                className="text-purple-400 hover:text-purple-700"
+                              >
+                                {copiedReqId === req.requestId ? (
+                                  <Check className="w-3 h-3 text-emerald-600" />
+                                ) : (
+                                  <Paperclip className="w-3 h-3" />
+                                )}
+                              </button>
+                            </span>
+
+                            <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${badgeClass}`}>
+                              {req.serviceType}
+                            </span>
+
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${statusClass}`}>
+                              {req.status}
+                            </span>
+                          </div>
+
+                          <span className="text-[11px] text-slate-400">
+                            {new Date(req.createdAt).toLocaleDateString()} {new Date(req.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+
+                        {/* Student & Project Details */}
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs text-slate-600 bg-slate-50/80 p-3 rounded-xl border border-slate-100">
+                          <div>
+                            <span className="text-slate-400 block text-[10px] uppercase font-bold">Student</span>
+                            <strong className="text-slate-900 text-sm">{req.student?.name}</strong>
+                            <div className="text-[11px] text-slate-500">{req.student?.college}</div>
+                          </div>
+
+                          <div>
+                            <span className="text-slate-400 block text-[10px] uppercase font-bold">Contact</span>
+                            <div><strong>Phone:</strong> {req.student?.phone}</div>
+                            <div className="truncate"><strong>Email:</strong> {req.student?.email}</div>
+                          </div>
+
+                          <div>
+                            <span className="text-slate-400 block text-[10px] uppercase font-bold">Academic Scope</span>
+                            <div>{req.student?.department}</div>
+                            <div className="text-[11px] text-slate-500">{req.student?.degree} ({req.student?.academicYear || 'Final Year'})</div>
+                          </div>
+
+                          <div className="sm:col-span-3 pt-1 border-t border-slate-200/60">
+                            <span className="text-slate-400 block text-[10px] uppercase font-bold">Topic / Focus</span>
+                            <span className="font-semibold text-slate-800">{reqTitle}</span>
+                          </div>
+
+                          {req.attachments && req.attachments.length > 0 && (
+                            <div className="sm:col-span-3 flex items-center gap-1.5 text-[11px] text-purple-700 font-semibold pt-0.5">
+                              <Paperclip className="w-3.5 h-3.5" />
+                              <span>{req.attachments.length} Reference Attachment(s) uploaded</span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Action Toolbar */}
+                        <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[11px] font-bold text-slate-500">Update Status:</span>
+                            <select
+                              value={req.status}
+                              onChange={(e) => handleUpdateServiceStatus(req._id || req.requestId, e.target.value)}
+                              className="text-xs font-semibold px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-700 focus:outline-none focus:border-purple-500"
+                            >
+                              <option value="Pending">Pending</option>
+                              <option value="Reviewing">Reviewing</option>
+                              <option value="In Progress">In Progress</option>
+                              <option value="Completed">Completed</option>
+                              <option value="Rejected">Rejected</option>
+                            </select>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              onClick={() => setSelectedRequest(req)}
+                              className="px-3.5 py-1.5 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 text-xs font-bold transition flex items-center gap-1.5"
+                            >
+                              <FileText className="w-3.5 h-3.5" />
+                              <span>View Full Specifications</span>
+                            </button>
+
+                            <a
+                              href={`https://wa.me/${(req.student?.phone || '').replace(/[^0-9]/g, '')}?text=Hello%20${encodeURIComponent(req.student?.name || 'Student')},%20this%20is%20Nexora%20Technologies%20regarding%20your%20${encodeURIComponent(req.serviceType)}%20request%20(${req.requestId}).`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition flex items-center gap-1.5"
+                            >
+                              <PhoneCall className="w-3.5 h-3.5" />
+                              <span>WhatsApp</span>
+                            </a>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+            </div>
+          )}
+
         </div>
+
+        {/* FULL SPECIFICATION INSPECTION MODAL */}
+        {selectedRequest && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-950/80 backdrop-blur-sm overflow-y-auto">
+            <div className="relative w-full max-w-3xl rounded-3xl bg-white border border-slate-200 p-5 sm:p-7 shadow-2xl my-auto max-h-[92vh] flex flex-col text-slate-800">
+              
+              {/* Header */}
+              <div className="flex items-center justify-between pb-3 border-b border-slate-200 shrink-0">
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-xs font-black text-purple-700 bg-purple-50 px-2.5 py-1 rounded-lg border border-purple-200">
+                    {selectedRequest.requestId}
+                  </span>
+                  <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700">
+                    {selectedRequest.serviceType}
+                  </span>
+                </div>
+
+                <button
+                  onClick={() => setSelectedRequest(null)}
+                  className="p-1.5 rounded-xl bg-slate-100 text-slate-400 hover:text-slate-800 hover:bg-slate-200 transition"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Scrollable Modal Content */}
+              <div className="flex-1 overflow-y-auto py-4 space-y-4 pr-1 text-xs">
+                
+                {/* Student Info */}
+                <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
+                  <h4 className="font-bold text-slate-900 text-sm flex items-center justify-between">
+                    <span>Student Profile & Institution</span>
+                    <span className="text-xs font-normal text-slate-500">
+                      Submitted: {new Date(selectedRequest.createdAt).toLocaleString()}
+                    </span>
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-slate-700">
+                    <div><strong>Name:</strong> {selectedRequest.student?.name}</div>
+                    <div><strong>Mobile:</strong> {selectedRequest.student?.phone}</div>
+                    <div><strong>Email:</strong> {selectedRequest.student?.email}</div>
+                    <div><strong>College:</strong> {selectedRequest.student?.college}</div>
+                    <div><strong>Dept:</strong> {selectedRequest.student?.department} ({selectedRequest.student?.degree})</div>
+                    <div><strong>Year:</strong> {selectedRequest.student?.academicYear}</div>
+                  </div>
+                </div>
+
+                {/* Submitted Service Specifications */}
+                <div className="p-4 rounded-2xl bg-purple-50/50 border border-purple-200 space-y-2">
+                  <h4 className="font-bold text-purple-900 text-sm">
+                    Submitted Service Requirements
+                  </h4>
+                  <div className="space-y-2 text-slate-700">
+                    {Object.entries(selectedRequest.requirements || {}).map(([key, val]) => (
+                      <div key={key} className="bg-white p-2.5 rounded-xl border border-purple-100">
+                        <span className="font-mono uppercase font-bold text-[10px] text-purple-600 block mb-0.5">
+                          {key}
+                        </span>
+                        <div className="text-slate-900 whitespace-pre-wrap leading-relaxed">
+                          {Array.isArray(val) ? val.join(', ') : String(val || 'N/A')}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Attachments Section */}
+                {selectedRequest.attachments && selectedRequest.attachments.length > 0 && (
+                  <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
+                    <h4 className="font-bold text-slate-900 text-sm flex items-center gap-1.5">
+                      <Paperclip className="w-4 h-4 text-purple-600" />
+                      <span>Uploaded Files ({selectedRequest.attachments.length})</span>
+                    </h4>
+                    <div className="space-y-2">
+                      {selectedRequest.attachments.map((file, idx) => (
+                        <div
+                          key={idx}
+                          className="p-3 rounded-xl bg-white border border-slate-200 flex items-center justify-between"
+                        >
+                          <div className="flex items-center gap-2 truncate pr-2">
+                            <FileCode className="w-4 h-4 text-purple-600 shrink-0" />
+                            <span className="font-semibold text-slate-800 truncate">{file.originalName}</span>
+                            {file.size && (
+                              <span className="text-[10px] text-slate-400 shrink-0">
+                                ({(file.size / (1024 * 1024)).toFixed(2)} MB)
+                              </span>
+                            )}
+                          </div>
+                          <a
+                            href={`${API_BASE_URL}/service-requests/attachment/${file.filename}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-bold text-[11px] flex items-center gap-1 shrink-0 transition"
+                          >
+                            <Download className="w-3 h-3" />
+                            <span>Download</span>
+                          </a>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Admin Internal Notes Timeline */}
+                <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
+                  <h4 className="font-bold text-slate-900 text-sm flex items-center gap-1.5">
+                    <MessageSquare className="w-4 h-4 text-sky-600" />
+                    <span>Admin Internal Progress Notes ({selectedRequest.adminNotes?.length || 0})</span>
+                  </h4>
+
+                  {selectedRequest.adminNotes && selectedRequest.adminNotes.length > 0 ? (
+                    <div className="space-y-2">
+                      {selectedRequest.adminNotes.map((note, idx) => (
+                        <div key={idx} className="p-2.5 rounded-xl bg-white border border-slate-200 text-xs">
+                          <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1">
+                            <span className="font-bold text-slate-700">{note.author}</span>
+                            <span>{new Date(note.createdAt).toLocaleString()}</span>
+                          </div>
+                          <p className="text-slate-800">{note.note}</p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-slate-400 text-xs italic">No internal notes added yet.</p>
+                  )}
+
+                  {/* Add Note Form */}
+                  <div className="flex gap-2 pt-1">
+                    <input
+                      type="text"
+                      value={newAdminNote}
+                      onChange={(e) => setNewAdminNote(e.target.value)}
+                      placeholder="Add an internal progress note, guide feedback or call summary..."
+                      className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:border-purple-500"
+                    />
+                    <button
+                      type="button"
+                      disabled={addingNote || !newAdminNote.trim()}
+                      onClick={() => handleAddAdminNote(selectedRequest._id || selectedRequest.requestId)}
+                      className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs transition disabled:opacity-50"
+                    >
+                      {addingNote ? 'Adding...' : 'Add Note'}
+                    </button>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Modal Footer */}
+              <div className="pt-3 border-t border-slate-200 flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-xs text-slate-600">Status:</span>
+                  <select
+                    value={selectedRequest.status}
+                    onChange={(e) => handleUpdateServiceStatus(selectedRequest._id || selectedRequest.requestId, e.target.value)}
+                    className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 text-slate-800"
+                  >
+                    <option value="Pending">Pending</option>
+                    <option value="Reviewing">Reviewing</option>
+                    <option value="In Progress">In Progress</option>
+                    <option value="Completed">Completed</option>
+                    <option value="Rejected">Rejected</option>
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <a
+                    href={`https://wa.me/${(selectedRequest.student?.phone || '').replace(/[^0-9]/g, '')}?text=Hello%20${encodeURIComponent(selectedRequest.student?.name || 'Student')},%20this%20is%20Nexora%20Technologies%20regarding%20your%20${encodeURIComponent(selectedRequest.serviceType)}%20request%20(${selectedRequest.requestId}).`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1.5 transition"
+                  >
+                    <PhoneCall className="w-3.5 h-3.5" />
+                    <span>WhatsApp</span>
+                  </a>
+
+                  <button
+                    onClick={() => setSelectedRequest(null)}
+                    className="px-4 py-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold text-xs transition"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        )}
 
         {/* Footer info */}
         <div className="px-6 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500 shrink-0">

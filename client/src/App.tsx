@@ -6,6 +6,7 @@ import { AcademicSupport } from './components/AcademicSupport';
 import { ProjectCatalog } from './components/ProjectCatalog';
 import { Footer } from './components/Footer';
 import { ConsultationModal } from './components/ConsultationModal';
+import { ServiceDataCollectionModal, type ServiceType } from './components/ServiceDataCollectionModal';
 import { FloatingContactDock } from './components/FloatingContactDock';
 import { AdminDashboard, type SiteConfig } from './components/AdminDashboard';
 import { API_BASE_URL } from './lib/api';
@@ -33,6 +34,9 @@ export function App() {
   const [selectedCategory, setSelectedCategory] = useState('ALL');
   const [isConsultationOpen, setIsConsultationOpen] = useState(false);
   const [consultationTopic, setConsultationTopic] = useState('');
+  const [consultationService, setConsultationService] = useState('Academic Projects');
+  const [isServiceModalOpen, setIsServiceModalOpen] = useState(false);
+  const [selectedServiceSegment, setSelectedServiceSegment] = useState<ServiceType>('Project Reports');
   const [isAdminOpen, setIsAdminOpen] = useState(false);
   const [settings, setSettings] = useState<SiteConfig>(defaultSettings);
 
@@ -53,7 +57,22 @@ export function App() {
     fetchSettings();
   }, []);
 
-  const handleOpenConsultation = (topic?: string) => {
+  const handleOpenConsultation = (topic?: string, service?: string) => {
+    const serviceSegments: ServiceType[] = [
+      'Project Reports',
+      'IEEE Reports',
+      'Resume Building',
+      'Portfolio Development',
+    ];
+
+    const target = (service || topic) as ServiceType;
+    if (target && serviceSegments.includes(target)) {
+      setSelectedServiceSegment(target);
+      setIsServiceModalOpen(true);
+      return;
+    }
+
+    setConsultationService(service || 'Academic Projects');
     setConsultationTopic(topic || '');
     setIsConsultationOpen(true);
   };
@@ -132,10 +151,19 @@ export function App() {
         isOpen={isConsultationOpen}
         onClose={() => setIsConsultationOpen(false)}
         initialTopic={consultationTopic}
+        initialService={consultationService}
         whatsappNumber={settings.whatsappNumber}
       />
 
-      {/* Live Admin Dashboard (Hero Editor, Contact/Address Editor, Inquiries, Projects) */}
+      {/* Comprehensive Student Service Data Collection Modal */}
+      <ServiceDataCollectionModal
+        isOpen={isServiceModalOpen}
+        onClose={() => setIsServiceModalOpen(false)}
+        initialService={selectedServiceSegment}
+        whatsappNumber={settings.whatsappNumber}
+      />
+
+      {/* Live Admin Dashboard (Hero Editor, Contact/Address Editor, Inquiries, Projects, Service Requests) */}
       <AdminDashboard
         isOpen={isAdminOpen}
         onClose={() => setIsAdminOpen(false)}
